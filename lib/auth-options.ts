@@ -2,6 +2,13 @@ import SpotifyProvider from "next-auth/providers/spotify";
 import type { NextAuthOptions } from "next-auth";
 import { saveUser } from "./db-sync";
 
+interface SpotifyProfile {
+  id: string;
+  email: string;
+  display_name: string;
+  images?: Array<{ url: string }>;
+}
+
 const scopes = [
   "user-read-email",
   "user-read-private",
@@ -68,20 +75,21 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, account, profile }) {
       if (account && profile) {
+        const spotifyProfile = profile as SpotifyProfile;
         console.log('New account login - scopes granted:', account.scope);
         token.accessToken = account.access_token;
         token.refreshToken = account.refresh_token;
         token.expiresAt = account.expires_at;
         token.scope = account.scope;
-        token.userId = profile.id;
+        token.userId = spotifyProfile.id;
 
         // Save user to database
         try {
           await saveUser({
-            id: profile.id as string,
-            email: profile.email as string,
-            name: profile.display_name as string,
-            image: (profile as any).images?.[0]?.url,
+            id: spotifyProfile.id,
+            email: spotifyProfile.email,
+            name: spotifyProfile.display_name,
+            image: spotifyProfile.images?.[0]?.url,
           });
         } catch (error) {
           console.error('[Auth] Failed to save user to DB:', error);

@@ -16,6 +16,7 @@ declare module "next-auth" {
     accessToken?: string;
     error?: string;
     scope?: string;
+    userId?: string;
     user: {
       /** The user's Spotify ID */
       id: string;
@@ -34,5 +35,6 @@ declare module "next-auth/jwt" {
     expiresAt?: number;
     error?: string;
     scope?: string;
+    userId?: string;
   }
 }

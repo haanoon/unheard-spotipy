@@ -1,5 +1,5 @@
 import { pgTable, text, timestamp, integer, real, boolean, jsonb, uniqueIndex, index } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 
 // Users table - stores Spotify user info
 export const users = pgTable('users', {
@@ -41,7 +41,7 @@ export const tracks = pgTable('tracks', {
   valence: real('valence'),
 
   // Genre data (from artists)
-  genres: jsonb('genres').notNull().$type<string[]>().default('[]'),
+  genres: jsonb('genres').notNull().$type<string[]>().default(sql`'[]'`),
 
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
