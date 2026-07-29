@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { getSpotifyClient } from "./spotify";
 import { buildTfidf, buildIdf, vectorize, kMeans, scoreAgainstCentroids } from "./kmeans";
+import { saveTracks, saveRecommendations, saveListeningHistory } from "./db-sync";
 
 export interface RecommendationResult {
   id: string;
@@ -198,9 +199,9 @@ function extractTopGenres(genreLists: string[][], topN = 30): string[] {
 
 export async function getPersonalizedRecommendations(
   accessToken: string,
-  options: { limit?: number } = {}
+  options: { limit?: number; userId?: string } = {}
 ): Promise<RecommendationResult[]> {
-  const { limit = 30 } = options;
+  const { limit = 30, userId } = options;
 
   console.log("Phase 1: Fetching user listening history...");
   const [userTracks, heardIds] = await Promise.all([
@@ -213,6 +214,22 @@ export async function getPersonalizedRecommendations(
   }
 
   console.log(`Found ${userTracks.length} tracks in history, ${heardIds.size} heard IDs.`);
+
+  // Save listening history to database (non-blocking)
+  if (userId) {
+    Promise.allSettled(
+      Array.from(heardIds).slice(0, 50).map(trackId => {
+        const track = userTracks.find(t => t.id === trackId);
+        if (track) {
+          return saveListeningHistory({
+            userId,
+            trackId,
+            playedAt: new Date(),
+          });
+        }
+      })
+    ).catch(err => console.error('[DB] Failed to save listening history:', err));
+  }
 
   // Get genres for user's top tracks
   const userArtistIds = Array.from(
@@ -280,6 +297,35 @@ export async function getPersonalizedRecommendations(
         clusterScore: score,
       };
     });
+
+  // Save tracks and recommendations to database (non-blocking)
+  if (userId) {
+    Promise.allSettled([
+      // Save track metadata
+      saveTracks(
+        results.map(r => ({
+          id: r.id,
+          name: r.name,
+          artists: r.artists,
+          albumName: r.albumName,
+          albumImage: r.albumImage,
+          previewUrl: r.previewUrl || undefined,
+          externalUrl: r.externalUrl,
+          genres: enriched.find(e => e.track.id === r.id)?.genres || [],
+        }))
+      ),
+      // Save recommendations
+      saveRecommendations({
+        userId,
+        recommendations: results.map(r => ({
+          trackId: r.id,
+          clusterScore: r.clusterScore,
+          addedReason: r.addedReason,
+        })),
+        algorithmVersion: 'v1',
+      }),
+    ]).catch(err => console.error('[DB] Failed to save recommendations:', err));
+  }
 
   return results;
 }

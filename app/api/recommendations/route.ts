@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
     // Generate recommendations using the recommendation engine
     const recommendations = await getPersonalizedRecommendations(
       session.accessToken,
-      { limit }
+      { limit, userId: session.userId }
     );
 
     console.log(`Generated ${recommendations.length} recommendations`);
