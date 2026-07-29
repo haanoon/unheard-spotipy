@@ -217,6 +217,7 @@ export async function getPersonalizedRecommendations(
 
   // Save listening history to database (non-blocking)
   if (userId) {
+    console.log(`[DB] Attempting to save listening history for user ${userId}...`);
     Promise.allSettled(
       Array.from(heardIds).slice(0, 50).map(trackId => {
         const track = userTracks.find(t => t.id === trackId);
@@ -227,8 +228,18 @@ export async function getPersonalizedRecommendations(
             playedAt: new Date(),
           });
         }
+        return Promise.resolve();
       })
-    ).catch(err => console.error('[DB] Failed to save listening history:', err));
+    ).then((results) => {
+      const succeeded = results.filter(r => r.status === 'fulfilled').length;
+      const failed = results.filter(r => r.status === 'rejected');
+      console.log(`[DB] Listening history: ${succeeded} saved, ${failed.length} failed`);
+      if (failed.length > 0) {
+        console.error('[DB] Listening history errors:', failed.map(f => f.reason));
+      }
+    }).catch(err => console.error('[DB] Failed to save listening history:', err));
+  } else {
+    console.log('[DB] userId is undefined, skipping listening history save');
   }
 
   // Get genres for user's top tracks
@@ -300,6 +311,7 @@ export async function getPersonalizedRecommendations(
 
   // Save tracks and recommendations to database (non-blocking)
   if (userId) {
+    console.log(`[DB] Saving data for user ${userId}...`);
     Promise.allSettled([
       // Save track metadata
       saveTracks(
@@ -324,7 +336,18 @@ export async function getPersonalizedRecommendations(
         })),
         algorithmVersion: 'v1',
       }),
-    ]).catch(err => console.error('[DB] Failed to save recommendations:', err));
+    ]).then((results) => {
+      results.forEach((result, index) => {
+        const operation = index === 0 ? 'saveTracks' : 'saveRecommendations';
+        if (result.status === 'rejected') {
+          console.error(`[DB] ${operation} failed:`, result.reason);
+        } else {
+          console.log(`[DB] ${operation} succeeded`);
+        }
+      });
+    }).catch(err => console.error('[DB] Failed to save recommendations:', err));
+  } else {
+    console.log('[DB] userId is undefined, skipping database save');
   }
 
   return results;

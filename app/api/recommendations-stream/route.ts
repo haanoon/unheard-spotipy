@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
       try {
         const recommendations = await getPersonalizedRecommendationsWithProgress(
           accessToken,
-          { limit },
+          { limit, userId: token.userId as string },
           send
         );
 

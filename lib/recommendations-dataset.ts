@@ -1,6 +1,7 @@
 // K-Means clustering recommendation engine with dataset
 import { kMeans, cosineSimilarity, Vector } from "./kmeans";
 import { getSpotifyClient } from "./spotify";
+import { saveTracks, saveRecommendations, saveListeningHistory } from "./db-sync";
 import fs from "fs/promises";
 import path from "path";
 import { parse } from "csv-parse/sync";
@@ -326,7 +327,7 @@ async function enrichWithSpotifyData(
 // Main recommendation function
 export async function getPersonalizedRecommendationsWithProgress(
   accessToken: string,
-  options: { limit?: number } = {},
+  options: { limit?: number; userId?: string } = {},
   onProgress: ProgressCallback
 ): Promise<RecommendationResult[]> {
   const { limit = 30 } = options;
@@ -584,6 +585,48 @@ async function fetchSpotifyAlbumArtwork(
 
   console.log(`[MAIN] Returning ${results.length} recommendations`);
   console.log(`[MAIN] Top 3 scores:`, results.slice(0, 3).map(r => r.matchScore));
+
+  // Save tracks and recommendations to database (non-blocking)
+  const userId = options.userId;
+  if (userId) {
+    console.log(`[DB] Saving data for user ${userId}...`);
+    Promise.allSettled([
+      // Save track metadata
+      saveTracks(
+        results.map(r => ({
+          id: r.id,
+          name: r.name,
+          artists: r.artists,
+          albumName: r.albumName,
+          albumImage: r.albumImage,
+          previewUrl: r.previewUrl || undefined,
+          externalUrl: r.externalUrl,
+          genres: [], // Genre data not available in dataset
+        }))
+      ),
+      // Save recommendations
+      saveRecommendations({
+        userId,
+        recommendations: results.map(r => ({
+          trackId: r.id,
+          clusterScore: r.matchScore,
+          addedReason: r.addedReason,
+        })),
+        algorithmVersion: 'dataset-v1',
+      }),
+    ]).then((saveResults) => {
+      saveResults.forEach((result, index) => {
+        const operation = index === 0 ? 'saveTracks' : 'saveRecommendations';
+        if (result.status === 'rejected') {
+          console.error(`[DB] ${operation} failed:`, result.reason);
+        } else {
+          console.log(`[DB] ${operation} succeeded`);
+        }
+      });
+    }).catch(err => console.error('[DB] Failed to save recommendations:', err));
+  } else {
+    console.log('[DB] userId is undefined, skipping database save');
+  }
 
   return results;
 }
