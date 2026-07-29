@@ -350,6 +350,25 @@ export async function getPersonalizedRecommendationsWithProgress(
   const userTracks = await getUserTracks(accessToken, onProgress);
   console.log(`[MAIN] User has ${userTracks.length} tracks in history`);
 
+  // Save user's listening history to database (non-blocking)
+  const userId = options.userId;
+  if (userId && userTracks.length > 0) {
+    console.log(`[DB] Saving ${userTracks.length} user tracks to listening history...`);
+    Promise.allSettled(
+      userTracks.slice(0, 100).map(track =>
+        saveListeningHistory({
+          userId,
+          trackId: track.id,
+          playedAt: new Date(),
+        })
+      )
+    ).then((results) => {
+      const succeeded = results.filter(r => r.status === 'fulfilled').length;
+      const failed = results.filter(r => r.status === 'rejected').length;
+      console.log(`[DB] Listening history: ${succeeded} saved, ${failed} failed`);
+    }).catch(err => console.error('[DB] Failed to save listening history:', err));
+  }
+
   // Send user's tracks to frontend for display during analysis
   onProgress({
     stage: "fetching_history",
