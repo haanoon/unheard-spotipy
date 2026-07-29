@@ -35,6 +35,9 @@ next-env.d.ts
 # Graphify output
 graphify-out/
 
+# Drizzle migrations (can be regenerated)
+drizzle/
+
 # Debug logs
 npm-debug.log*
 yarn-debug.log*
@@ -68,3 +71,4 @@ __pycache__/
 env/
 venv/
 old-python-version/
+
