@@ -606,7 +606,6 @@ async function fetchSpotifyAlbumArtwork(
   console.log(`[MAIN] Top 3 scores:`, results.slice(0, 3).map(r => r.matchScore));
 
   // Save tracks and recommendations to database (non-blocking)
-  const userId = options.userId;
   if (userId) {
     console.log(`[DB] Saving data for user ${userId}...`);
     Promise.allSettled([
