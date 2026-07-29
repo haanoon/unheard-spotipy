@@ -117,16 +117,25 @@ export async function saveTrack(trackData: {
  * Batch save multiple tracks (more efficient)
  */
 export async function saveTracks(tracksData: Parameters<typeof saveTrack>[0][]) {
-  if (tracksData.length === 0) return;
+  if (tracksData.length === 0) {
+    console.log('[DB DEBUG] saveTracks called with 0 tracks, returning early');
+    return;
+  }
+
+  console.log(`[DB DEBUG] saveTracks called with ${tracksData.length} tracks`);
 
   try {
     // Process in batches of 50 to avoid huge queries
     const batchSize = 50;
     for (let i = 0; i < tracksData.length; i += batchSize) {
       const batch = tracksData.slice(i, i + batchSize);
-      await Promise.allSettled(batch.map(track => saveTrack(track)));
+      console.log(`[DB DEBUG] Processing batch ${Math.floor(i / batchSize) + 1}, size: ${batch.length}`);
+      const results = await Promise.allSettled(batch.map(track => saveTrack(track)));
+      const batchSucceeded = results.filter(r => r.status === 'fulfilled').length;
+      const batchFailed = results.filter(r => r.status === 'rejected').length;
+      console.log(`[DB DEBUG] Batch results: ${batchSucceeded} succeeded, ${batchFailed} failed`);
     }
-    console.log(`[DB] Saved ${tracksData.length} tracks`);
+    console.log(`[DB] ✅ Saved ${tracksData.length} tracks`);
   } catch (error) {
     console.error('[DB] Error batch saving tracks:', error);
   }
@@ -134,6 +143,7 @@ export async function saveTracks(tracksData: Parameters<typeof saveTrack>[0][]) 
 
 /**
  * Save listening history
+ * Note: The track must exist in the tracks table first (foreign key constraint)
  */
 export async function saveListeningHistory(data: {
   userId: string;
@@ -141,15 +151,31 @@ export async function saveListeningHistory(data: {
   playedAt: Date;
   context?: string;
 }) {
+  console.log(`[DB DEBUG] saveListeningHistory called for trackId=${data.trackId}`);
   try {
-    await db.insert(listeningHistory).values({
+    const values = {
       userId: data.userId,
       trackId: data.trackId,
       playedAt: data.playedAt,
       context: data.context || null,
+    };
+    console.log(`[DB DEBUG] Inserting into listening_history:`, JSON.stringify(values, null, 2));
+
+    const result = await db.insert(listeningHistory).values(values);
+    console.log(`[DB DEBUG] ✅ Successfully inserted listening history for track ${data.trackId}`);
+    return result;
+  } catch (error: any) {
+    console.error(`[DB ERROR] Failed to save listening history for track ${data.trackId}:`, {
+      code: error?.code,
+      message: error?.message,
+      detail: error?.detail,
     });
-  } catch (error) {
-    console.error('[DB] Error saving listening history:', error);
+
+    // Check if it's a foreign key constraint error
+    if (error?.code === '23503' || error?.message?.includes('foreign key')) {
+      console.error(`[DB] ❌ Track ${data.trackId} does not exist in tracks table yet (foreign key violation)`);
+    }
+    throw error; // Re-throw so caller knows it failed
   }
 }
 
@@ -178,6 +204,7 @@ export async function saveUserInteraction(data: {
 
 /**
  * Save recommendations
+ * Note: The tracks must exist in the tracks table first (foreign key constraint)
  */
 export async function saveRecommendations(data: {
   userId: string;
@@ -188,6 +215,8 @@ export async function saveRecommendations(data: {
   }>;
   algorithmVersion?: string;
 }) {
+  console.log(`[DB DEBUG] saveRecommendations called with ${data.recommendations.length} recommendations for user ${data.userId}`);
+
   try {
     const values = data.recommendations.map(rec => ({
       userId: data.userId,
@@ -198,10 +227,24 @@ export async function saveRecommendations(data: {
       recommendedAt: new Date(),
     }));
 
-    await db.insert(recommendations).values(values);
-    console.log(`[DB] Saved ${values.length} recommendations for user ${data.userId}`);
-  } catch (error) {
-    console.error('[DB] Error saving recommendations:', error);
+    console.log(`[DB DEBUG] Prepared ${values.length} recommendation records`);
+    console.log(`[DB DEBUG] First recommendation record:`, JSON.stringify(values[0], null, 2));
+
+    const result = await db.insert(recommendations).values(values);
+    console.log(`[DB] ✅ Saved ${values.length} recommendations for user ${data.userId}`);
+    return result;
+  } catch (error: any) {
+    console.error('[DB ERROR] Error saving recommendations:', {
+      code: error?.code,
+      message: error?.message,
+      detail: error?.detail,
+    });
+
+    // Check if it's a foreign key constraint error
+    if (error?.code === '23503' || error?.message?.includes('foreign key')) {
+      console.error('[DB] ❌ Some tracks do not exist in tracks table yet. Make sure tracks are saved first.');
+    }
+    throw error; // Re-throw so caller knows it failed
   }
 }
 

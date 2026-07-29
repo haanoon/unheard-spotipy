@@ -352,21 +352,72 @@ export async function getPersonalizedRecommendationsWithProgress(
 
   // Save user's listening history to database (non-blocking)
   const userId = options.userId;
+  console.log(`[DB DEBUG] userId=${userId}, userTracks.length=${userTracks.length}`);
+
   if (userId && userTracks.length > 0) {
     console.log(`[DB] Saving ${userTracks.length} user tracks to listening history...`);
-    Promise.allSettled(
-      userTracks.slice(0, 100).map(track =>
-        saveListeningHistory({
-          userId,
-          trackId: track.id,
-          playedAt: new Date(),
-        })
-      )
-    ).then((results) => {
-      const succeeded = results.filter(r => r.status === 'fulfilled').length;
-      const failed = results.filter(r => r.status === 'rejected').length;
-      console.log(`[DB] Listening history: ${succeeded} saved, ${failed} failed`);
-    }).catch(err => console.error('[DB] Failed to save listening history:', err));
+    console.log(`[DB DEBUG] First track sample:`, JSON.stringify(userTracks[0], null, 2));
+
+    // IMPORTANT: Save tracks FIRST, then listening history (foreign key constraint)
+    (async () => {
+      try {
+        // Step 1: Save track metadata
+        const tracksToSave = userTracks.map(track => ({
+          id: track.id,
+          name: track.name,
+          artists: track.artists,
+          albumName: track.album || 'Unknown Album',
+          albumImage: undefined,
+          previewUrl: undefined,
+          externalUrl: `https://open.spotify.com/track/${track.id}`,
+          genres: [],
+        }));
+
+        console.log(`[DB DEBUG] Prepared ${tracksToSave.length} tracks to save`);
+        console.log(`[DB DEBUG] First track to save:`, JSON.stringify(tracksToSave[0], null, 2));
+
+        await saveTracks(tracksToSave);
+        console.log(`[DB] ✅ User tracks metadata saved (${tracksToSave.length} tracks)`);
+
+        // Step 2: Save listening history (now that tracks exist)
+        console.log(`[DB DEBUG] Starting to save listening history for ${userTracks.length} tracks...`);
+
+        const historyResults = await Promise.allSettled(
+          userTracks.map((track, index) => {
+            if (index === 0) {
+              console.log(`[DB DEBUG] Saving first listening history entry:`, {
+                userId,
+                trackId: track.id,
+                playedAt: new Date().toISOString(),
+              });
+            }
+            return saveListeningHistory({
+              userId,
+              trackId: track.id,
+              playedAt: new Date(),
+            });
+          })
+        );
+
+        const succeeded = historyResults.filter(r => r.status === 'fulfilled').length;
+        const failed = historyResults.filter(r => r.status === 'rejected').length;
+
+        if (failed > 0) {
+          console.error(`[DB ERROR] Failed listening history saves:`);
+          historyResults.forEach((result, index) => {
+            if (result.status === 'rejected') {
+              console.error(`  - Track ${userTracks[index]?.id}: ${result.reason}`);
+            }
+          });
+        }
+
+        console.log(`[DB] Listening history: ${succeeded} saved, ${failed} failed`);
+      } catch (err) {
+        console.error('[DB] Failed to save listening history:', err);
+      }
+    })();
+  } else {
+    console.log(`[DB] Skipping listening history save - userId=${userId}, tracks=${userTracks.length}`);
   }
 
   // Send user's tracks to frontend for display during analysis
@@ -606,12 +657,15 @@ async function fetchSpotifyAlbumArtwork(
   console.log(`[MAIN] Top 3 scores:`, results.slice(0, 3).map(r => r.matchScore));
 
   // Save tracks and recommendations to database (non-blocking)
+  // IMPORTANT: Save tracks FIRST, then recommendations (foreign key constraint)
+  console.log(`[DB DEBUG] Preparing to save recommendations - userId=${userId}, results.length=${results.length}`);
+
   if (userId) {
     console.log(`[DB] Saving data for user ${userId}...`);
-    Promise.allSettled([
-      // Save track metadata
-      saveTracks(
-        results.map(r => ({
+    (async () => {
+      try {
+        // Step 1: Save track metadata first
+        const tracksToSave = results.map(r => ({
           id: r.id,
           name: r.name,
           artists: r.artists,
@@ -620,30 +674,36 @@ async function fetchSpotifyAlbumArtwork(
           previewUrl: r.previewUrl || undefined,
           externalUrl: r.externalUrl,
           genres: [], // Genre data not available in dataset
-        }))
-      ),
-      // Save recommendations
-      saveRecommendations({
-        userId,
-        recommendations: results.map(r => ({
+        }));
+
+        console.log(`[DB DEBUG] Prepared ${tracksToSave.length} recommended tracks to save`);
+        console.log(`[DB DEBUG] First recommended track:`, JSON.stringify(tracksToSave[0], null, 2));
+
+        await saveTracks(tracksToSave);
+        console.log(`[DB] ✅ Recommended tracks saved (${tracksToSave.length} tracks)`);
+
+        // Step 2: Save recommendations (now that tracks exist)
+        const recommendationsToSave = results.map(r => ({
           trackId: r.id,
           clusterScore: r.matchScore,
           addedReason: r.addedReason,
-        })),
-        algorithmVersion: 'dataset-v1',
-      }),
-    ]).then((saveResults) => {
-      saveResults.forEach((result, index) => {
-        const operation = index === 0 ? 'saveTracks' : 'saveRecommendations';
-        if (result.status === 'rejected') {
-          console.error(`[DB] ${operation} failed:`, result.reason);
-        } else {
-          console.log(`[DB] ${operation} succeeded`);
-        }
-      });
-    }).catch(err => console.error('[DB] Failed to save recommendations:', err));
+        }));
+
+        console.log(`[DB DEBUG] Saving ${recommendationsToSave.length} recommendations...`);
+        console.log(`[DB DEBUG] First recommendation:`, JSON.stringify(recommendationsToSave[0], null, 2));
+
+        await saveRecommendations({
+          userId,
+          recommendations: recommendationsToSave,
+          algorithmVersion: 'dataset-v1',
+        });
+        console.log(`[DB] ✅ saveRecommendations succeeded (${recommendationsToSave.length} recommendations)`);
+      } catch (err) {
+        console.error('[DB ERROR] Failed to save recommendations:', err);
+      }
+    })();
   } else {
-    console.log('[DB] userId is undefined, skipping database save');
+    console.log('[DB WARNING] userId is undefined, skipping database save');
   }
 
   return results;
